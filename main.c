@@ -19,18 +19,17 @@ void readHexToBytes(char *, Specs *);
 
 unsigned long writeToPort(int, unsigned char *, int);
 
-void readFromPortAndPrint(int, int);
+void readFromPortAndPrint(Specs *, int, int);
 
 void printBytesAsHex(unsigned char *bytes, unsigned long length);
 
-void printCurrentTimeWithText(char *);
+void printCurrentTimeWithText(Specs *specs, char *);
 
 unsigned long long getCurrentTimeInMs();
 
 int main(int argc, char *argv[]) {
-    printf("%d", POLLNVAL);
-    printCurrentTimeWithText("Start");
     Specs *specs = readArgs(argc, argv);
+    printCurrentTimeWithText(specs, "Start");
     int hComm = open(specs->portName, O_RDWR);
 
     if (hComm < 0) {
@@ -75,15 +74,17 @@ int main(int argc, char *argv[]) {
     }
     fcntl(hComm, F_SETFL, 0);
 
-    printCurrentTimeWithText("Write start");
+    printCurrentTimeWithText(specs, "Write start");
     unsigned long writtenBytes = writeToPort(hComm, specs->payload, specs->payloadLength);
-    printCurrentTimeWithText("Write finish");
+    printCurrentTimeWithText(specs, "Write finish");
 
-    printf("Successfully wrote %lu byte(s)\n", writtenBytes);
+    if (specs->debug) {
+        printf("Successfully wrote %lu byte(s)\n", writtenBytes);
+    }
 
-    printCurrentTimeWithText("Read start");
-    readFromPortAndPrint(hComm, specs->timeout);
-    printCurrentTimeWithText("Read finish");
+    printCurrentTimeWithText(specs, "Read start");
+    readFromPortAndPrint(specs, hComm, specs->timeout);
+    printCurrentTimeWithText(specs, "Read finish");
 
     close(hComm);
     return 0;
@@ -105,10 +106,12 @@ unsigned long long getCurrentTimeInMs() {
     return s * 1000 + ms;
 }
 
-void printCurrentTimeWithText(char *text) {
+void printCurrentTimeWithText(Specs *specs, char *text) {
     unsigned long long total = getCurrentTimeInMs();
 
-    printf("%s: %lld s %lld ms\n", text, total / 1000, total % 1000);
+    if (specs->debug) {
+        printf("%s: %lld s %lld ms\n", text, total / 1000, total % 1000);
+    }
 }
 
 unsigned long writeToPort(int port, unsigned char *payload, int payloadLength) {
@@ -116,7 +119,7 @@ unsigned long writeToPort(int port, unsigned char *payload, int payloadLength) {
     return bytesWritten;
 }
 
-void readFromPortAndPrint(int port, int timeout) {
+void readFromPortAndPrint(Specs *specs, int port, int timeout) {
     unsigned char readBuf[4096];
 
     int bytesRead = 0;
@@ -124,7 +127,7 @@ void readFromPortAndPrint(int port, int timeout) {
 
     struct timeval tv;
     fd_set rfds;
-    while (ret > 0) {
+    while (bytesRead < 230) {
         FD_ZERO(&rfds);
         FD_SET(port, &rfds);
         tv.tv_sec = 0;
@@ -139,8 +142,10 @@ void readFromPortAndPrint(int port, int timeout) {
             if (FD_ISSET(port, &rfds)) {
                 // reading
                 unsigned char *buf = readBuf + bytesRead; // move the point to where should read
-                int res = read(port, &buf, sizeof(readBuf));
-                printf("Read %d bytes\n", bytesRead);
+                int res = read(port, buf, sizeof(readBuf));
+                if (specs->debug) {
+                    printf("Read %d bytes (%d total)\n", res, res + bytesRead);
+                }
                 if (res < 0) {
                     printf("Error %i from read: %s\n", errno, strerror(errno));
                     exit(0);
@@ -149,8 +154,9 @@ void readFromPortAndPrint(int port, int timeout) {
             }
         }
     }
-
-    printf("Successfully read %d byte(s)\n", bytesRead);
+    if (specs->debug) {
+        printf("Successfully read %d byte(s)\n", bytesRead);
+    }
     printBytesAsHex(readBuf, bytesRead);
 }
 
@@ -166,6 +172,7 @@ Specs *readArgs(int argc, char *argv[]) {
     Specs *specs = (Specs *) malloc(sizeof(Specs));
     specs->payload = NULL;
     specs->payloadLength = 0;
+    specs->debug = 0;
     specs->timeout = -1;
     specs->portName = NULL;
 
@@ -185,6 +192,8 @@ Specs *readArgs(int argc, char *argv[]) {
             ++i;
             if (argc <= i) printHelpAndExit();
             readHexToBytes(argv[i], specs);
+        } else if (strcmp(arg, "-d") == 0) {
+            specs->debug = 1;
         } else printHelpAndExit();
     }
 

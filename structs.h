@@ -10,6 +10,7 @@ struct Specs_ {
     char *portName;
     unsigned char *payload;
     int payloadLength;
+    int debug;
 };
 
 typedef struct Specs_ Specs;

@@ -107,11 +107,11 @@ unsigned long long getCurrentTimeInMs() {
 }
 
 void printCurrentTimeWithText(Specs *specs, char *text) {
-    unsigned long long total = getCurrentTimeInMs();
-
     if (specs->debug) {
+        unsigned long long total = getCurrentTimeInMs();
         printf("%s: %lld s %lld ms\n", text, total / 1000, total % 1000);
     }
+
 }
 
 unsigned long writeToPort(int port, unsigned char *payload, int payloadLength) {
@@ -120,44 +120,61 @@ unsigned long writeToPort(int port, unsigned char *payload, int payloadLength) {
 }
 
 void readFromPortAndPrint(Specs *specs, int port, int timeout) {
-    unsigned char readBuf[4096];
-
-    int bytesRead = 0;
-    int ret = 1;
+    int totalBufferSize = 64 * 1024; // 64kb
+    const int bufferSize = 64 * 1024; // 64kb
+    unsigned char *readBuf = malloc(bufferSize);
+    unsigned long totalBytesRead = 0;
+    unsigned long bytesRead = 0;
+    int fdsReady;
 
     struct timeval tv;
     fd_set rfds;
-    while (bytesRead < 230) {
+    do {
         FD_ZERO(&rfds);
         FD_SET(port, &rfds);
         tv.tv_sec = 0;
         tv.tv_usec = timeout * 1000; // millisec to microsec
 
-        ret = select(port + 1, &rfds, NULL, NULL, &tv);
+        if (totalBytesRead >= totalBufferSize) {
+            // reallocation would be called only in case
+            // if we read all the previous space and probably have more to read
+            totalBufferSize += bufferSize;
+            readBuf = realloc(readBuf, totalBufferSize);
+            if (specs->debug) {
+                printf("Realloc buffer to %d bytes\n", totalBufferSize);
+            }
+        }
 
-        if (ret == -1) { printf("error"); }
-        else if (ret == 0) {
+        fdsReady = select(port + 1, &rfds, NULL, NULL, &tv);
+
+        if (fdsReady == -1) {
+            printf("Error %i from select: %s\n", errno, strerror(errno));
+            exit(0);
+        }
+
+        if (fdsReady == 0) {
             break;
         } else {
             if (FD_ISSET(port, &rfds)) {
                 // reading
-                unsigned char *buf = readBuf + bytesRead; // move the point to where should read
-                int res = read(port, buf, sizeof(readBuf));
+                unsigned char *buf = readBuf + totalBytesRead; // move the point to where should read
+                bytesRead = read(port, buf, totalBufferSize - totalBytesRead);
+                totalBytesRead += bytesRead;
                 if (specs->debug) {
-                    printf("Read %d bytes (%d total)\n", res, res + bytesRead);
+                    printf("Read %lu bytes (%lu total)\n", bytesRead, totalBytesRead);
                 }
-                if (res < 0) {
+                if (bytesRead < 0) {
                     printf("Error %i from read: %s\n", errno, strerror(errno));
                     exit(0);
                 }
-                bytesRead += res;
             }
         }
-    }
+    } while (fdsReady > 0);
+
     if (specs->debug) {
-        printf("Successfully read %d byte(s)\n", bytesRead);
+        printf("Successfully read %lu byte(s)\n", totalBytesRead);
     }
-    printBytesAsHex(readBuf, bytesRead);
+    printBytesAsHex(readBuf, totalBytesRead);
 }
 
 void printBytesAsHex(unsigned char *bytes, unsigned long length) {
